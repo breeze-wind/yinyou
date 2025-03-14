@@ -176,9 +176,9 @@ private:
 
 
             cv::line(show, line_start, line_end, cv::Scalar(255, 0, 0), 2);
-           std::cout << show.type() << std::endl;
-            cv::imshow("image1", blue_mask);
-            cv::waitKey(1);
+           // std::cout << show.type() << std::endl;
+           //  cv::imshow("image1", blue_mask);
+           //  cv::waitKey(1);
         } catch (const cv_bridge::Exception &e) {
             RCLCPP_INFO(this->get_logger(), "error%s", e.what());
         }
