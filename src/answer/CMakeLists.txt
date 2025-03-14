@@ -18,6 +18,7 @@ ament_auto_add_executable(
 target_link_libraries(show
         ${rclcpp_LIBRARIES}
         ${OpenCV_LIBRARIES}  # 链接生成的消息类型
+
 )
 
 ament_auto_package()
