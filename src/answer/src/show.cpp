@@ -10,11 +10,63 @@
 double distanceBetweenPoints(const cv::Point2f &p1, const cv::Point2f &p2) {
     return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2));
 }//点对点距离
+double distanceToLine(const cv::Point &point, const cv::Vec4f &line) {
+    double x0 = point.x, y0 = point.y;
+    double x1 = line[0], y1 = line[1];
+    double x2 = line[2], y2 = line[3];
+
+    double A = y2 - y1;
+    double B = x1 - x2;
+    double C = x2 * y1 - x1 * y2;
+
+    return std::abs(A * x0 + B * y0 + C) / std::sqrt(A * A + B * B);
+}
+//点到线距离
+class LineDetector {
+public:
+    LineDetector() : window_size(5) {}
+    // 检测直线
+    cv::Vec4i detectLines(cv::Mat black_mask) {
+        std::vector<cv::Vec4i> lines;
+
+        // 使用 HoughLinesP 检测直线
+        cv::HoughLinesP(black_mask, lines, 1, CV_PI / 180, 50, 200, 80);
+        // 如果检测到直线，更新滑动窗口
+        if (!lines.empty()) {
+            updateWindow(lines[0]); // 只处理第一条直线
+        }
+        // 返回平滑后的直线数据
+        return smoothLines();
+    }
+private:
+    int window_size; // 滑动窗口大小
+    std::deque<cv::Vec4i> line_window; // 滑动窗口，存储最近的直线数据
+    // 更新滑动窗口
+    void updateWindow(const cv::Vec4i& line) {
+        if (line_window.size() >= window_size) {
+            line_window.pop_front(); // 移除最旧的数据
+        }
+        line_window.push_back(line); // 添加最新的数据
+    }
+    // 对直线数据进行平滑处理
+    cv::Vec4i smoothLines() {
 
 
+        cv::Vec4i smoothed_line(0, 0, 0, 0);
+        if (line_window.empty()) {
+            return smoothed_line; // 如果没有数据，返回空
+        }
+        for (const auto& line : line_window) { // 计算滑动窗口中直线数据的平均值
+            smoothed_line += line;
+        }
+        smoothed_line /= static_cast<int>(line_window.size());
+        return smoothed_line;
+    }
+};//直线检测（带有平滑，缓存操作）
 class click {
 public:
-    click()=default;
+    click() : min_distance_squared(16.0), min_time_interval(0.3) {}
+
     bool operator()(cv::Point2f p) {
         try {
             // 计算当前 p 和 last_p 的欧氏距离平方
@@ -22,13 +74,20 @@ public:
             double dy = p.y - last_p.y;
             double distance_squared = dx * dx + dy * dy;
 
-            // 如果距离小于阈值，不进行 publish
-            if (distance_squared < min_distance_squared) {
-                return false;
+            // 获取当前时间
+            auto now = std::chrono::steady_clock::now();
+
+            // 计算时间差
+            double time_diff = std::chrono::duration<double>(now - last_publish_time).count();
+
+            // 双重检测：距离和时间间隔
+            if (distance_squared < min_distance_squared || time_diff < min_time_interval) {
+                return false; // 如果任一条件不满足，不发送消息
             }
 
-            // 更新 last_p
+            // 更新 last_p 和 last_publish_time
             last_p = p;
+            last_publish_time = now;
 
             // 发布消息
             geometry_msgs::msg::Point32 point;
@@ -42,27 +101,18 @@ public:
             return false;
         }
     }
-void Publisher(rclcpp::Publisher<geometry_msgs::msg::Point32>::SharedPtr pub) {
-        publisher=pub;
+
+    void Publisher(rclcpp::Publisher<geometry_msgs::msg::Point32>::SharedPtr pub) {
+        publisher = pub;
     }
+
 private:
-    rclcpp::Publisher<geometry_msgs::msg::Point32>::SharedPtr publisher; // 发布器
-    double min_distance_squared=10.0; // 最小距离的平方（避免开方计算）
-    cv::Point2f last_p; // 上一次的 p 值
+    rclcpp::Publisher<geometry_msgs::msg::Point32>::SharedPtr publisher;
+    double min_distance_squared; // 最小距离的平方（避免开方计算）
+    double min_time_interval;    // 最小时间间隔（秒）
+    cv::Point2f last_p;          // 上一次的 p 值
+    std::chrono::steady_clock::time_point last_publish_time; // 上一次发送消息的时间
 };
-
-// 计算点到直线的距离
-double distanceToLine(const cv::Point &point, const cv::Vec4f &line) {
-    double x0 = point.x, y0 = point.y;
-    double x1 = line[0], y1 = line[1];
-    double x2 = line[2], y2 = line[3];
-
-    double A = y2 - y1;
-    double B = x1 - x2;
-    double C = x2 * y1 - x1 * y2;
-
-    return std::abs(A * x0 + B * y0 + C) / std::sqrt(A * A + B * B);
-}
 
 
 class image_precss : public rclcpp::Node {
@@ -76,32 +126,14 @@ public:
     }
     rclcpp::Publisher<geometry_msgs::msg::Point32>::SharedPtr msg_pub;
    click my_click;
+    cv::Mat blue_mask;
+    cv::Mat black_mask;
 private:
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
 
-    bool line_processing(const cv::Mat& frame, const cv::Mat& black_mask, cv::Mat &show, cv::Point2f &line_start, cv::Point2f &line_end) {
-        std::vector<cv::Vec4i> lines;
-        show = frame.clone();
-        int count = 0;
-        cv::HoughLinesP(black_mask, lines, 1.0,CV_PI / 180, 500);
-        std::vector<cv::Point2f> points;
-        for (const auto &line: lines) {
-            points.emplace_back(line[0], line[1]); // 起点
-            points.emplace_back(line[2], line[3]); // 终点
-        }if (points.size() < 2) {
-            std::cerr << "Error: Not enough points to fit a line." << std::endl;
-            return false;
-        }
-
-        cv::Vec4f line_params; // 存储拟合直线的参数 (vx, vy, x0, y0)
-        cv::fitLine(points, line_params, cv::DIST_L2, 0, 0.01, 0.01);
-        float vx = line_params[0];
-        float vy = line_params[1];
-        float x0 = line_params[2];
-        float y0 = line_params[3];
-
-        line_start = cv::Point2f(x0 - vx * 1000, y0 - vy * 1000);
-        line_end = cv::Point2f(x0 + vx * 1000, y0 + vy * 1000);
+    bool line_processing(const cv::Mat& black_mask, cv::Vec4i& processed_line) {
+        LineDetector line_detector;
+       processed_line= line_detector.detectLines(black_mask);
         return true;
     }
 
@@ -129,16 +161,14 @@ private:
     void image_callback(const sensor_msgs::msg::Image::SharedPtr msg) {
         try {
             cv::Mat frame;
-            cv::Mat blue_mask;
-            cv::Mat black_mask;
+
             image_init(msg, frame, blue_mask, black_mask);
             ////////
             cv::Mat blue_pre=blue_mask.clone();
             std::vector<cv::RotatedRect> rects;
-            cv::Point2f line_start;
-            cv::Point2f line_end;//判定线的首尾坐标
-            cv::Mat show;
-            if (!line_processing(frame, black_mask, show, line_start, line_end)) {std::cerr<<"line_process_error";return;}
+           cv::Vec4i processed_line;
+            cv::Mat show=frame.clone();
+            if (!line_processing( black_mask, processed_line)) {std::cerr<<"line_process_error";return;}
             while (true) {
                 std::vector<std::vector<cv::Point>> contours;
                 cv::findContours(blue_pre, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
@@ -157,13 +187,13 @@ private:
                 cv::fillConvexPoly(mask, poly, cv::Scalar(255));
                 blue_pre.setTo(0, mask); // 将矩形区域设置为背景色
                 std::thread t( [blue_pre,frame] {
-                    cv::imshow("image", frame);cv::imshow("image3", blue_pre);cv::waitKey(1);
+                  //  cv::imshow("image", frame);cv::imshow("image3", blue_pre);cv::waitKey(1);
                 });
                t.detach();
             }
             for (const auto &rect: rects) {
-               double dis= distanceToLine(rect.center,cv::Vec4i(line_start.x,line_start.y,line_end.x,line_end.y));
-                if (dis<50&&dis>0) {//参数与延迟有关
+               double dis= distanceToLine(rect.center,processed_line);
+                if (dis<60&&dis>0) {//参数与延迟有关
 
                 if (my_click(rect.center)) {
                     std::cout<<"position send"<<std::endl;
@@ -175,20 +205,23 @@ private:
             }
 
 
-            cv::line(show, line_start, line_end, cv::Scalar(255, 0, 0), 2);
+           cv::line(show, cv::Point( processed_line[0],processed_line[1]), cv::Point(processed_line[2],processed_line[3]), cv::Scalar(255, 0, 0), 2);
            // std::cout << show.type() << std::endl;
-           //  cv::imshow("image1", blue_mask);
-           //  cv::waitKey(1);
+             cv::imshow("image1", show);
+            cv::waitKey(1);
         } catch (const cv_bridge::Exception &e) {
             RCLCPP_INFO(this->get_logger(), "error%s", e.what());
         }
     };
-};
+};//图像处理主对象（节点类）
 
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<image_precss>());
+    std::shared_ptr<image_precss> node=std::make_shared<image_precss>();
+    rclcpp::spin(node);
     rclcpp::shutdown();
+
+
     cv::destroyAllWindows();
 }
