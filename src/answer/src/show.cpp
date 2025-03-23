@@ -268,7 +268,7 @@ private:
                 cv::RotatedRect smoothed_rect = rect_detector.detectRects(rects); // 平滑处理矩形
                 double dis = distanceToLine(smoothed_rect.center, processed_line);
 
-                if (dis < 60 && dis > 0) { // 参数与延迟有关
+                if (dis < 90 && dis > 0) { // 参数与延迟有关
                     if (my_click(smoothed_rect.center)) {
                         std::cout << "position send" << std::endl;
                         return;
