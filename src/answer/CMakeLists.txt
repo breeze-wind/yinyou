@@ -10,12 +10,12 @@ if(BUILD_TESTING)
 endif()
 # 添加可执行文件
 ament_auto_add_executable(
-        show
+        answer
         src/main.cpp
 )
 
 # 链接ROS库
-target_link_libraries(show
+target_link_libraries(answer
         ${rclcpp_LIBRARIES}
         ${OpenCV_LIBRARIES}  # 链接生成的消息类型
 
