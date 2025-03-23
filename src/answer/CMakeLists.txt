@@ -11,7 +11,7 @@ endif()
 # 添加可执行文件
 ament_auto_add_executable(
         show
-        src/show.cpp
+        src/main.cpp
 )
 
 # 链接ROS库
